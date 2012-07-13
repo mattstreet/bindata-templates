@@ -27,16 +27,32 @@ Field Offset  Field Size  Field
 345   155   Filename prefix
 =end
 
+class PaddedString < BinData::String
+  default_parameters :pad_byte => "\0"
+end
+
 class TarHeader < BinData::Record
   string :name,     :length => 100  #name of file
   string :mode,     :length => 8    #file mode
   string :uid,      :length => 8    #owner user ID
   string :gid,      :length => 8    #owner group ID
-  string :file_size,     :length => 12   #length of file in bytes
+  string :file_size_raw,:length => 12   #length of file in bytes
   string :mtime,    :length => 12   #modify time of file
   string :chksum,   :length => 8    #checksum for header
   string :link,     :length => 1    #indicator for links
   string :linkname, :length => 100  #name of linked file 
+
+  def file_size
+    # Change an octal ASCII string to an int
+    self.file_size_raw.to_i(8)
+  end
+
+  def file_size=(v)
+    # Change an int into an octal ASCII NULL terminated string and padded it out with 0's 
+    raw = v.to_s(8)
+    leading_zeros = "0" * [11,11 - raw.length].min
+    self.file_size_raw = leading_zeros + raw + "\0"
+  end
 end
 
 class USTARHeader < BinData::Record
@@ -45,8 +61,8 @@ class USTARHeader < BinData::Record
   string :owner_group_name, :length => 32
   string :device_major_number, :length => 8
   string :device_minor_number, :length => 8
-  string :filename_prefix, :length => 155
-  skip :length => 12
+  PaddedString :filename_prefix, :length => 155
+  string :padding, :length => 12, :pad_byte => "\0"
 end
 
 class TarFile < BinData::Record
@@ -54,18 +70,18 @@ class TarFile < BinData::Record
   string :ustar_indicator, :length => 6 #"ustar"
   choice :ustar_header, :selection => lambda { ustar_indicator.include? "ustar" } do
     USTARHeader true
-    skip false, :length => 225
+    string false, :length => 225
   end
-  string :file, :length => lambda { header.file_size.to_i(8) }
-  skip :length => lambda { ((file.length / 512.0).ceil * 512) - file.length } 
+  string :file, :length => lambda { header.file_size }
+  string :padding, :length => lambda { ((file.length / 512.0).ceil * 512) - file.length } 
 end
 
 class Tar < BinData::Record
-  #TarFile :tarfile
   array :files, :type => TarFile, :initial_length => 1
 end
 
 io = File.open(ARGV[0])
-tar = Tar.read(io)
-puts tar
-
+tar = Tar.read(io).files[0]
+puts tar.header.file_size
+tar.header.file_size = 500
+print tar.header.file_size_raw.inspect
