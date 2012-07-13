@@ -32,15 +32,15 @@ class PaddedString < BinData::String
 end
 
 class TarHeader < BinData::Record
-  string :name,     :length => 100  #name of file
-  string :mode,     :length => 8    #file mode
-  string :uid,      :length => 8    #owner user ID
-  string :gid,      :length => 8    #owner group ID
-  string :file_size_raw,:length => 12   #length of file in bytes
-  string :mtime,    :length => 12   #modify time of file
-  string :chksum,   :length => 8    #checksum for header
-  string :link,     :length => 1    #indicator for links
-  string :linkname, :length => 100  #name of linked file 
+  string :name,          :length => 100  #name of file
+  string :mode,          :length => 8    #file mode
+  string :uid,           :length => 8    #owner user ID
+  string :gid,           :length => 8    #owner group ID
+  string :file_size_raw, :length => 12   #length of file in bytes
+  string :mtime,         :length => 12   #modify time of file
+  string :chksum,        :length => 8    #checksum for header
+  string :link,          :length => 1    #indicator for links
+  string :linkname,      :length => 100  #name of linked file 
 
   def file_size
     # Change an octal ASCII string to an int
@@ -56,32 +56,48 @@ class TarHeader < BinData::Record
 end
 
 class USTARHeader < BinData::Record
-  string :ustar_version, :length => 2 #"00"
-  string :owner_user_name, :length => 32
-  string :owner_group_name, :length => 32
-  string :device_major_number, :length => 8
-  string :device_minor_number, :length => 8
-  PaddedString :filename_prefix, :length => 155
-  string :padding, :length => 12, :pad_byte => "\0"
+  string       :ustar_version,       :length => 2
+  string       :owner_user_name,     :length => 32
+  string       :owner_group_name,    :length => 32
+  string       :device_major_number, :length => 8
+  string       :device_minor_number, :length => 8
+  PaddedString :filename_prefix,     :length => 155
+  string       :padding,             :length => 12, :pad_byte => "\0"
 end
 
 class TarFile < BinData::Record
   TarHeader :header
-  string :ustar_indicator, :length => 6 #"ustar"
-  choice :ustar_header, :selection => lambda { ustar_indicator.include? "ustar" } do
+  string    :ustar_indicator, :length => 6 #"ustar"
+
+  # Choice lets us support old style tar as well as ustar extention
+  choice    :ustar_header, :selection => lambda { ustar_indicator.include? "ustar" } do
     USTARHeader true
-    string false, :length => 225
+    string false, :length => 225, :pad_byte => "\0"
   end
   string :file, :length => lambda { header.file_size }
-  string :padding, :length => lambda { ((file.length / 512.0).ceil * 512) - file.length } 
+  string :padding, :length => lambda { ((file.length / 512.0).ceil * 512) - file.length }
+
+  def blank?
+    self.header.name == "\0" * 100
+  end
 end
 
 class Tar < BinData::Record
-  array :files, :type => TarFile, :initial_length => 1
+  array :files_raw, :type => TarFile, :read_until => lambda { self.cleanup(index) }
+  string :two_empty_records,:value => "\0" * 1024
+
+  def cleanup(index)
+    if self.files_raw[index].blank?
+      self.files_raw.length -= 1
+      true
+    else
+      false
+    end
+  end
 end
 
 io = File.open(ARGV[0])
-tar = Tar.read(io).files[0]
-puts tar.header.file_size
-tar.header.file_size = 500
-print tar.header.file_size_raw.inspect
+puts io
+tar = Tar.read(io)
+puts tar.files_raw.length
+puts tar
